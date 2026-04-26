@@ -19,6 +19,7 @@ export interface User {
   profile_photo_url: string | null;
   is_seller: boolean;
   is_admin: boolean;
+  is_approved: boolean;
   community_id: string;
   created_at: string;
 }
@@ -28,6 +29,7 @@ export interface Community {
   id: string;
   name: string;
   city: string;
+  is_active: boolean;
   created_at: string;
 }
 
@@ -48,7 +50,7 @@ export interface Listing {
   updated_at: string;
   // Joined fields (not in DB, populated by queries)
   seller?: User;
-  photos?: ListingPhoto[];
+  photos?: { photo_url: string; sort_order: number }[];
   food_details?: FoodDetails;
   cloth_items?: ClothItem[];
   tuition_details?: TuitionDetails;

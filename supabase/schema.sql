@@ -29,6 +29,7 @@ create table if not exists users (
   profile_photo_url  text,
   is_seller          boolean not null default false,
   is_admin           boolean not null default false,
+  is_approved        boolean not null default false,
   community_id       uuid references communities(id),
   created_at         timestamptz default now()
 );

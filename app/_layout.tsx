@@ -5,9 +5,8 @@ import { AuthProvider, useAuth } from '../hooks/useAuth';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
-// Watches auth state and redirects accordingly
 function AuthGate() {
-  const { session, isLoading } = useAuth();
+  const { session, profile, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -15,15 +14,34 @@ function AuthGate() {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const inTabs = segments[0] === '(tabs)';
+    const inAdmin = segments[0] === 'admin';
 
     if (!session && !inAuthGroup) {
       // Not signed in → go to login
       router.replace('/(auth)/login');
     } else if (session && inAuthGroup) {
-      // Signed in but still on auth screen → go to tabs
-      router.replace('/(tabs)');
+      // Signed in — check profile state
+      if (!profile) return; // still loading profile
+
+      const seg = segments as string[];
+      if (!profile.name) {
+        // New user — needs to complete onboarding
+        if (seg[1] !== 'onboarding') router.replace('/(auth)/onboarding');
+      } else if (!profile.is_approved) {
+        // Registered but not yet approved
+        if (seg[1] !== 'pending') router.replace('/(auth)/pending');
+      } else {
+        // Fully approved — go to main app
+        router.replace('/(tabs)');
+      }
+    } else if (session && !inAuthGroup && !inAdmin) {
+      // Signed in, in the app — verify they are still approved
+      if (profile && !profile.is_approved) {
+        router.replace('/(auth)/pending');
+      }
     }
-  }, [session, isLoading, segments]);
+  }, [session, profile, isLoading, segments]);
 
   if (isLoading) {
     return (
