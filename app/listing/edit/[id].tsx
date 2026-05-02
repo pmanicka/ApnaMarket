@@ -15,7 +15,7 @@ export default function EditListingScreen() {
   const [isSaving, setIsSaving] = useState(false);
 
   // Category specific edit state
-  const [foodPrice, setFoodPrice] = useState('');
+  const [foodItemsState, setFoodItemsState] = useState<Record<string, { price: string }>>({});
   const [tuitionFee, setTuitionFee] = useState('');
   const [servicePrice, setServicePrice] = useState('');
   
@@ -27,8 +27,12 @@ export default function EditListingScreen() {
       setTitle(listing.title || '');
       setDescription(listing.description || '');
 
-      if (listing.category === 'food' && listing.food_details) {
-        setFoodPrice(listing.food_details.price.toString());
+      if (listing.category === 'food' && listing.food_items) {
+        const itemsState: Record<string, { price: string }> = {};
+        listing.food_items.forEach(item => {
+          itemsState[item.id] = { price: item.price.toString() };
+        });
+        setFoodItemsState(itemsState);
       } else if (listing.category === 'tuition' && listing.tuition_details) {
         setTuitionFee(listing.tuition_details.fee_per_month.toString());
       } else if (listing.category === 'services' && listing.service_details) {
@@ -61,11 +65,13 @@ export default function EditListingScreen() {
 
       // 2. Update category specific tables
       if (listing.category === 'food') {
-        const { error: fError } = await supabase
-          .from('food_details')
-          .update({ price: parseFloat(foodPrice) })
-          .eq('listing_id', listing.id);
-        if (fError) throw fError;
+        for (const [fId, fData] of Object.entries(foodItemsState)) {
+          const { error: fError } = await supabase
+            .from('food_items')
+            .update({ price: parseFloat(fData.price) })
+            .eq('id', fId);
+          if (fError) throw fError;
+        }
       } else if (listing.category === 'tuition') {
         const { error: tError } = await supabase
           .from('tuition_details')
@@ -107,6 +113,13 @@ export default function EditListingScreen() {
     setClothVariants(prev => ({
       ...prev,
       [vId]: { ...prev[vId], [field]: value }
+    }));
+  };
+
+  const updateFoodItem = (fId: string, field: 'price', value: string) => {
+    setFoodItemsState(prev => ({
+      ...prev,
+      [fId]: { ...prev[fId], [field]: value }
     }));
   };
 
@@ -161,16 +174,27 @@ export default function EditListingScreen() {
         </View>
 
         {/* Category Specific Edits */}
-        {listing.category === 'food' && (
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Price (₹)</Text>
-            <TextInput
-              style={styles.input}
-              value={foodPrice}
-              onChangeText={setFoodPrice}
-              keyboardType="numeric"
-              placeholderTextColor="#6B7280"
-            />
+        {listing.category === 'food' && listing.food_items && (
+          <View style={styles.clothesSection}>
+            <Text style={styles.sectionTitle}>Food Prices</Text>
+            {listing.food_items.map(item => (
+              <View key={item.id} style={styles.clothItemBlock}>
+                <Text style={styles.clothItemName}>{item.item_name}</Text>
+                <View style={styles.variantRow}>
+                  <Text style={styles.variantSize}>Price (₹)</Text>
+                  <View style={styles.variantInputs}>
+                    <TextInput
+                      style={styles.variantInput}
+                      value={foodItemsState[item.id]?.price}
+                      onChangeText={(val) => updateFoodItem(item.id, 'price', val)}
+                      keyboardType="numeric"
+                      placeholder="Price"
+                      placeholderTextColor="#6B7280"
+                    />
+                  </View>
+                </View>
+              </View>
+            ))}
           </View>
         )}
 

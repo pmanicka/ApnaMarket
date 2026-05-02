@@ -51,10 +51,13 @@ export interface Listing {
   // Joined fields (not in DB, populated by queries)
   seller?: User;
   photos?: { photo_url: string; sort_order: number }[];
-  food_details?: FoodDetails;
+  food_items?: FoodItem[];
+  food_menu_settings?: FoodMenuSettings;
   cloth_items?: ClothItem[];
   tuition_details?: TuitionDetails;
   service_details?: ServiceDetails;
+  grocery_items?: GroceryItem[];
+  reviews?: Review[];
 }
 
 // ─── Listing Photos ────────────────────────────────────────────────────────────
@@ -65,15 +68,23 @@ export interface ListingPhoto {
   sort_order: number;
 }
 
-// ─── Food Details ─────────────────────────────────────────────────────────────
-export interface FoodDetails {
+// ─── Food Items ─────────────────────────────────────────────────────────────
+export interface FoodItem {
+  id: string;
   listing_id: string;
+  item_name: string;
+  description: string | null;
   price: number;
   unit: FoodUnit;
   min_order: number;
+  is_veg: boolean;
+  photo_url: string | null;
+}
+
+export interface FoodMenuSettings {
+  listing_id: string;
   pre_order_required: boolean;
   order_by_time: string | null;  // ISO time string
-  is_veg: boolean;
   available_days: string[];       // ['mon', 'tue', ...]
 }
 
@@ -126,6 +137,18 @@ export interface ServiceDetails {
   experience: string;
 }
 
+// ─── Groceries ────────────────────────────────────────────────────────────────
+export interface GroceryItem {
+  id: string;
+  listing_id: string;
+  item_name: string;
+  description: string | null;
+  price_per_unit: number;
+  unit_type: string;
+  min_order_qty: number;
+  step_qty: number;
+}
+
 // ─── Orders (Phase 2) ─────────────────────────────────────────────────────────
 export interface Order {
   id: string;
@@ -142,12 +165,14 @@ export interface Order {
 // ─── Reviews (Phase 2) ────────────────────────────────────────────────────────
 export interface Review {
   id: string;
-  order_id: string;
+  order_id?: string;
+  listing_id?: string;
   reviewer_id: string;
   seller_id: string;
   rating: number;   // 1–5
   comment: string;
   created_at: string;
+  reviewer?: User;
 }
 
 // ─── Auth Context ─────────────────────────────────────────────────────────────

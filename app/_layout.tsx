@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../hooks/useAuth';
+import { usePushNotifications } from '../hooks/usePushNotifications';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 
 // ─── Auth Guard ───────────────────────────────────────────────────────────────
@@ -9,6 +10,9 @@ function AuthGate() {
   const { session, profile, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  
+  // Initialize Push Notifications once authenticated
+  usePushNotifications();
 
   useEffect(() => {
     if (isLoading) return;

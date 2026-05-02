@@ -31,6 +31,7 @@ create table if not exists users (
   is_admin           boolean not null default false,
   is_approved        boolean not null default false,
   community_id       uuid references communities(id),
+  push_token         text,
   created_at         timestamptz default now()
 );
 
@@ -94,14 +95,24 @@ create table if not exists listing_photos (
 );
 
 -- ─── Food Details ─────────────────────────────────────────────────────────────
-create table if not exists food_details (
-  listing_id          uuid primary key references listings(id) on delete cascade,
+-- ─── Food Items (Multiple per Listing) ──────────────────────────────────────────
+create table if not exists food_items (
+  id                  uuid primary key default uuid_generate_v4(),
+  listing_id          uuid not null references listings(id) on delete cascade,
+  item_name           text not null,
+  description         text,
   price               numeric not null,
   unit                text not null default 'per_plate',
   min_order           integer not null default 1,
+  is_veg              boolean not null default true,
+  photo_url           text
+);
+
+-- ─── Food Menu Settings (Global per Listing) ──────────────────────────────────
+create table if not exists food_menu_settings (
+  listing_id          uuid primary key references listings(id) on delete cascade,
   pre_order_required  boolean not null default false,
   order_by_time       text,
-  is_veg              boolean not null default true,
   available_days      text[] not null default '{}'
 );
 
@@ -167,10 +178,17 @@ create table if not exists orders (
   created_at      timestamptz default now()
 );
 
--- ─── Reviews (Phase 2 placeholder) ────────────────────────────────────────────
+-- Orders RLS
+alter table orders enable row level security;
+create policy "orders_read_own" on orders for select using (auth.uid() = buyer_id OR auth.uid() = seller_id);
+create policy "orders_insert_buyer" on orders for insert with check (auth.uid() = buyer_id);
+create policy "orders_update_seller" on orders for update using (auth.uid() = seller_id OR auth.uid() = buyer_id);
+
+-- ─── Reviews (Phase 2) ────────────────────────────────────────────
 create table if not exists reviews (
   id           uuid primary key default uuid_generate_v4(),
-  order_id     uuid not null references orders(id),
+  order_id     uuid references orders(id) on delete set null,
+  listing_id   uuid references listings(id) on delete cascade,
   reviewer_id  uuid not null references users(id),
   seller_id    uuid not null references users(id),
   rating       integer not null check (rating between 1 and 5),
@@ -178,7 +196,20 @@ create table if not exists reviews (
   created_at   timestamptz default now()
 );
 
--- ─── Storage Bucket ────────────────────────────────────────────────────────────
+-- ─── Groceries (Phase 2 expansion) ──────────────────────────────────────────
+create table if not exists grocery_items (
+  id                uuid primary key default uuid_generate_v4(),
+  listing_id        uuid not null references listings(id) on delete cascade,
+  item_name         text not null,
+  description       text,
+  price_per_unit    numeric(10, 2) not null,
+  unit_type         text not null default 'KG' check (unit_type in ('KG', 'Gram', 'Liter', 'Packet', 'Bunch', 'Piece')),
+  min_order_qty     numeric(10, 2) not null default 0.25,
+  step_qty          numeric(10, 2) not null default 0.25,
+  created_at        timestamptz default now()
+);
+
+-- ─── Tuition ───────────────────────────────────────────────────────────────────
 -- Run this separately in the Supabase Storage UI or via the dashboard:
 -- Create a public bucket named "listing-photos"
 -- Policy: allow authenticated users to upload; allow public read
@@ -188,7 +219,8 @@ alter table communities    enable row level security;
 alter table users          enable row level security;
 alter table listings       enable row level security;
 alter table listing_photos enable row level security;
-alter table food_details   enable row level security;
+alter table food_items     enable row level security;
+alter table food_menu_settings enable row level security;
 alter table cloth_items    enable row level security;
 alter table cloth_item_photos enable row level security;
 alter table cloth_variants enable row level security;
@@ -200,10 +232,13 @@ alter table reviews        enable row level security;
 -- Communities: anyone can read
 create policy "communities_read_all" on communities for select using (true);
 
--- Users: read all, update own
+-- Users: read all, update own or if admin
 create policy "users_read_all" on users for select using (true);
 create policy "users_insert_own" on users for insert with check (auth.uid() = id);
 create policy "users_update_own" on users for update using (auth.uid() = id);
+create policy "users_update_admin" on users for update using (
+  (select is_admin from users where id = auth.uid()) = true
+);
 
 -- Listings: read all available, insert/update/delete own
 create policy "listings_read_all" on listings
@@ -229,18 +264,17 @@ create policy "listing_photos_delete_own" on listing_photos
     exists (select 1 from listings where id = listing_id and seller_id = auth.uid())
   );
 
--- Food details: read all, manage own
-create policy "food_details_read_all" on food_details for select using (true);
-create policy "food_details_insert_own" on food_details
-  for insert with check (
+-- Food items: read all, manage own
+create policy "food_items_read_all" on food_items for select using (true);
+create policy "food_items_manage_own" on food_items
+  for all using (
     exists (select 1 from listings where id = listing_id and seller_id = auth.uid())
   );
-create policy "food_details_update_own" on food_details
-  for update using (
-    exists (select 1 from listings where id = listing_id and seller_id = auth.uid())
-  );
-create policy "food_details_delete_own" on food_details
-  for delete using (
+
+-- Food menu settings: read all, manage own
+create policy "food_menu_settings_read_all" on food_menu_settings for select using (true);
+create policy "food_menu_settings_manage_own" on food_menu_settings
+  for all using (
     exists (select 1 from listings where id = listing_id and seller_id = auth.uid())
   );
 
@@ -287,9 +321,17 @@ create policy "service_details_manage_own" on service_details
     exists (select 1 from listings where id = listing_id and seller_id = auth.uid())
   );
 
+-- Reviews: read all, manage own
+create policy "reviews_read_all" on reviews for select using (true);
+create policy "reviews_insert_own" on reviews for insert with check (auth.uid() = reviewer_id);
+create policy "reviews_update_own" on reviews for update using (auth.uid() = reviewer_id);
+create policy "reviews_delete_own" on reviews for delete using (auth.uid() = reviewer_id);
+
 -- ─── Indexes ───────────────────────────────────────────────────────────────────
 create index if not exists idx_listings_community on listings(community_id);
 create index if not exists idx_listings_category  on listings(category);
 create index if not exists idx_listings_seller    on listings(seller_id);
 create index if not exists idx_listings_created   on listings(created_at desc);
 create index if not exists idx_cloth_items_listing on cloth_items(listing_id);
+create index if not exists idx_reviews_listing    on reviews(listing_id);
+create index if not exists idx_reviews_seller     on reviews(seller_id);

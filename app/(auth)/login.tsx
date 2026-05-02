@@ -38,6 +38,9 @@ export default function LoginScreen() {
 
     const { error } = await supabase.auth.signInWithOtp({
       phone: formatted,
+      options: {
+        channel: 'whatsapp',
+      }
     });
 
     setIsLoading(false);

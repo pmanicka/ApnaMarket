@@ -12,16 +12,67 @@ import {
   SafeAreaView,
   Share,
   Dimensions,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useMemo } from 'react';
 import { useListing } from '../../hooks/useListing';
 import { StatusBar } from 'expo-status-bar';
+import { useAuth } from '../../hooks/useAuth';
+import { supabase } from '../../lib/supabase';
 
 export default function ListingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { listing, isLoading, error } = useListing(id);
+  const { profile } = useAuth();
+  const { refetch } = useListing(id);
+  const [isReviewModalVisible, setReviewModalVisible] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  
+  // Local Cart for WhatsApp orders
+  const [cart, setCart] = useState<Record<string, {name: string, price: number, qty: number}>>({});
+
+  const updateCart = (id: string, name: string, price: number, delta: number) => {
+    setCart(prev => {
+      const currentQty = prev[id]?.qty || 0;
+      // Round to 2 decimals to prevent floating point issues
+      const rawQty = Math.max(0, currentQty + delta);
+      const newQty = Math.round(rawQty * 100) / 100;
+      if (newQty === 0) {
+        const newCart = { ...prev };
+        delete newCart[id];
+        return newCart;
+      }
+      return { ...prev, [id]: { name, price, qty: newQty } };
+    });
+  };
+
+  const handleSubmitReview = async () => {
+    if (!profile) { Alert.alert("Login Required", "You must be logged in to review."); return; }
+    if (!reviewComment.trim()) { Alert.alert("Missing Input", "Please write a comment."); return; }
+    setIsSubmittingReview(true);
+    const { error } = await supabase.from("reviews").insert({
+      listing_id: id,
+      reviewer_id: profile.id,
+      seller_id: listing!.seller_id,
+      rating: reviewRating,
+      comment: reviewComment.trim(),
+    });
+    setIsSubmittingReview(false);
+    if (error) { Alert.alert("Error", error.message); return; }
+    setReviewModalVisible(false);
+    setReviewComment("");
+    refetch();
+    Alert.alert("Success", "Review added!");
+  };
+
 
   const [isContactModalVisible, setContactModalVisible] = useState(false);
   
@@ -56,10 +107,87 @@ export default function ListingDetailScreen() {
       return;
     }
     const mobile = listing.seller.mobile;
-    // Add country code if missing
     const formatted = mobile.startsWith('+') ? mobile : `+91${mobile}`;
-    const text = encodeURIComponent(`Hi ${listing.seller.name}, I saw your listing "${listing.title}" on ApnaMarket and I'm interested!`);
-    Linking.openURL(`whatsapp://send?phone=${formatted}&text=${text}`).catch(() => {
+    
+    let message = `Hi ${listing.seller.name}, I saw your listing "${listing.title}" on ApnaMarket and I'm interested!`;
+
+    // Make the message specific based on what they are looking at
+    if (Object.keys(cart).length > 0) {
+      let total = 0;
+      const itemsList = Object.values(cart).map(i => {
+        total += i.price * i.qty;
+        return `${i.qty}x ${i.name} (₹${i.price * i.qty})`;
+      }).join('\n- ');
+      
+      const address = profile ? `Deliver to: Block ${profile.block}, Flat ${profile.flat_number}` : '';
+      message = `Hi ${listing.seller.name}, I'd like to order from "${listing.title}":\n\n- ${itemsList}\n\nTotal: ₹${total}\n${address}`;
+    } else if (listing.category === 'clothes' && listing.cloth_items && listing.cloth_items.length > 0) {
+      const item = listing.cloth_items[selectedClothItemIndex];
+      const variant = item?.variants?.[selectedVariantIndex];
+      if (item && variant) {
+        message = `Hi ${listing.seller.name}, I'd like to buy the "${item.item_name}" (Size: ${variant.size}) for ₹${variant.price} from your ApnaMarket listing "${listing.title}". Is it available?`;
+      }
+    } else if (listing.category === 'food') {
+      message = `Hi ${listing.seller.name}, I'd like to place an order from your ApnaMarket listing "${listing.title}". What is the process?`;
+    } else if (listing.category === 'tuition' && listing.tuition_details) {
+      message = `Hi ${listing.seller.name}, I saw your tuition listing "${listing.title}" on ApnaMarket. I'm interested in classes for ${listing.tuition_details.subjects.join(', ')}.`;
+    } else if (listing.category === 'services' && listing.service_details) {
+      message = `Hi ${listing.seller.name}, I need your ${listing.service_details.service_type} services as listed on ApnaMarket ("${listing.title}"). Are you available?`;
+    }
+
+    if (profile) {
+      let totalAmount = 0;
+      let orderItems = { ...cart };
+
+      if (Object.keys(orderItems).length === 0) {
+        // Fallback for single item ordering without cart
+        if (listing.category === 'clothes' && listing.cloth_items && listing.cloth_items.length > 0) {
+          const item = listing.cloth_items[selectedClothItemIndex];
+          const variant = item?.variants?.[selectedVariantIndex];
+          if (item && variant) {
+            orderItems[variant.id || 'single'] = { name: `${item.item_name} (${variant.size})`, price: variant.price, qty: 1 };
+            totalAmount = variant.price;
+          }
+        } else if (listing.category === 'tuition' && listing.tuition_details) {
+          totalAmount = listing.tuition_details.fee_per_month || 0;
+          orderItems['tuition'] = { name: `Tuition: ${listing.tuition_details.subjects.join(', ')}`, price: totalAmount, qty: 1 };
+        } else if (listing.category === 'services' && listing.service_details) {
+          totalAmount = listing.service_details.starting_price || 0;
+          orderItems['service'] = { name: `Service: ${listing.service_details.service_type}`, price: totalAmount, qty: 1 };
+        } else {
+          // Generic fallback (e.g., food without specific items)
+          orderItems['generic'] = { name: 'General Order Inquiry', price: 0, qty: 1 };
+        }
+      } else {
+        Object.values(orderItems).forEach(i => { totalAmount += i.price * i.qty; });
+      }
+
+      supabase.from("orders").insert({
+        buyer_id: profile.id,
+        seller_id: listing!.seller_id,
+        listing_id: id,
+        items_json: orderItems,
+        total_amount: totalAmount,
+        payment_status: "pending",
+        order_status: "pending",
+      }).then(({error}) => { 
+        if (error) {
+          Alert.alert("Order save error", error.message); 
+          console.log("Order save error:", error);
+        }
+      });
+    }
+
+    const text = encodeURIComponent(message);
+    Linking.openURL(`whatsapp://send?phone=${formatted}&text=${text}`).then(() => {
+      // Clear the cart
+      setCart({});
+      setSelectedClothItemIndex(0);
+      setSelectedVariantIndex(0);
+      
+      // Navigate directly to the orders history tab!
+      router.push('/(tabs)/orders');
+    }).catch(() => {
       Alert.alert('Error', 'WhatsApp is not installed on your device');
     });
   };
@@ -74,7 +202,14 @@ export default function ListingDetailScreen() {
 
   const displayPrice = useMemo(() => {
     if (!listing) return '₹---';
-    if (listing.category === 'food' && listing.food_details) return `₹${listing.food_details.price}`;
+    if (listing.category === 'food' && listing.food_items && listing.food_items.length > 0) {
+      const minPrice = Math.min(...listing.food_items.map(i => i.price));
+      return `Starts from ₹${minPrice}`;
+    }
+    if (listing.category === 'groceries' && listing.grocery_items && listing.grocery_items.length > 0) {
+      const minPrice = Math.min(...listing.grocery_items.map(i => i.price_per_unit));
+      return `Starts from ₹${minPrice}`;
+    }
     if (listing.category === 'tuition' && listing.tuition_details) return `₹${listing.tuition_details.fee_per_month}/mo`;
     if (listing.category === 'services' && listing.service_details) {
       return listing.service_details.price_type === 'starting_from' 
@@ -111,18 +246,97 @@ export default function ListingDetailScreen() {
   const renderCategorySpecificDetails = () => {
     switch (listing.category) {
       case 'food':
-        const food = listing.food_details;
-        if (!food) return null;
+        const settings = listing.food_menu_settings?.[0] || listing.food_menu_settings; // Depending on how Supabase returns it (sometimes array for 1:1 if not set up correctly, but should be object if .single() equivalent, however our select is `food_menu_settings(*)`)
+        // Ensure settings is just an object if it came back as array
+        const foodSettings = Array.isArray(settings) ? settings[0] : settings;
+        const foodItems = listing.food_items;
+        
+        if (!foodItems || foodItems.length === 0) return null;
+        
         return (
-          <View style={styles.specsBox}>
-            <Text style={styles.specItem}>🏷️ Unit: {food.unit.replace('_', ' ')}</Text>
-            <Text style={styles.specItem}>📦 Min Order: {food.min_order}</Text>
-            <Text style={styles.specItem}>
-              {food.is_veg ? '🟢 Pure Veg' : '🔴 Non-Veg'}
-            </Text>
-            {food.pre_order_required && (
-              <Text style={styles.specItem}>⏳ Pre-order by: {food.order_by_time}</Text>
+          <View>
+            {foodSettings && foodSettings.pre_order_required && (
+              <View style={styles.specsBox}>
+                <Text style={styles.specItem}>⏳ Pre-order by: {foodSettings.order_by_time}</Text>
+              </View>
             )}
+            
+            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Menu</Text>
+            {foodItems.map((item, index) => {
+              const qty = cart[item.id]?.qty || 0;
+              return (
+                <View key={item.id} style={styles.clothesContainer}>
+                  <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+                      <Text style={{color: '#FFF', fontSize: 16, fontWeight: '700', flex: 1}}>{item.item_name}</Text>
+                      <Text style={{color: '#FF6B35', fontSize: 16, fontWeight: '700'}}>₹{item.price}</Text>
+                  </View>
+                  {item.description ? <Text style={{color: '#9CA3AF', marginTop: 4, marginBottom: 8}}>{item.description}</Text> : null}
+                  
+                  <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8}}>
+                    <Text style={{color: '#D1D5DB', fontSize: 14}}>
+                      🏷️ {item.unit.replace('_', ' ')} | 📦 Min: {item.min_order} | {item.is_veg ? '🟢 Veg' : '🔴 Non-Veg'}
+                    </Text>
+                    {/* Add to Cart Controls */}
+                    <View style={{flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 20, borderWidth: 1, borderColor: '#2D2D44'}}>
+                      <TouchableOpacity onPress={() => updateCart(item.id, item.item_name, item.price, -1)} style={{padding: 8, paddingHorizontal: 12}}>
+                        <Text style={{color: qty > 0 ? '#FF6B35' : '#4B5563', fontSize: 16, fontWeight: '800'}}>-</Text>
+                      </TouchableOpacity>
+                      <Text style={{color: '#FFF', paddingHorizontal: 4, fontWeight: '700'}}>{qty}</Text>
+                      <TouchableOpacity onPress={() => updateCart(item.id, item.item_name, item.price, 1)} style={{padding: 8, paddingHorizontal: 12}}>
+                        <Text style={{color: '#FF6B35', fontSize: 16, fontWeight: '800'}}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        );
+
+      case 'groceries':
+        const groceryItems = listing.grocery_items;
+        if (!groceryItems || groceryItems.length === 0) return null;
+        
+        return (
+          <View>
+            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Items Available</Text>
+            {groceryItems.map((item) => {
+              const qty = cart[item.id]?.qty || 0;
+              const step = item.step_qty || 0.25;
+              const min = item.min_order_qty || 0.25;
+              return (
+                <View key={item.id} style={styles.clothesContainer}>
+                  <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+                      <Text style={{color: '#FFF', fontSize: 16, fontWeight: '700', flex: 1}}>{item.item_name}</Text>
+                      <Text style={{color: '#FF6B35', fontSize: 16, fontWeight: '700'}}>₹{item.price_per_unit}/{item.unit_type}</Text>
+                  </View>
+                  {item.description ? <Text style={{color: '#9CA3AF', marginTop: 4, marginBottom: 8}}>{item.description}</Text> : null}
+                  
+                  <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8}}>
+                    <Text style={{color: '#D1D5DB', fontSize: 14}}>
+                      🏷️ {item.unit_type} | 📦 Min: {min}
+                    </Text>
+                    {/* Add to Cart Controls */}
+                    <View style={{flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 20, borderWidth: 1, borderColor: '#2D2D44'}}>
+                      <TouchableOpacity onPress={() => {
+                        // If going down to 0, subtract the current qty
+                        if (qty <= min) updateCart(item.id, item.item_name, item.price_per_unit, -qty);
+                        else updateCart(item.id, item.item_name, item.price_per_unit, -step);
+                      }} style={{padding: 8, paddingHorizontal: 12}}>
+                        <Text style={{color: qty > 0 ? '#FF6B35' : '#4B5563', fontSize: 16, fontWeight: '800'}}>-</Text>
+                      </TouchableOpacity>
+                      <Text style={{color: '#FFF', paddingHorizontal: 4, fontWeight: '700'}}>{qty}</Text>
+                      <TouchableOpacity onPress={() => {
+                        if (qty === 0) updateCart(item.id, item.item_name, item.price_per_unit, min);
+                        else updateCart(item.id, item.item_name, item.price_per_unit, step);
+                      }} style={{padding: 8, paddingHorizontal: 12}}>
+                        <Text style={{color: '#FF6B35', fontSize: 16, fontWeight: '800'}}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
           </View>
         );
 
@@ -196,9 +410,21 @@ export default function ListingDetailScreen() {
                   ))}
                 </View>
                 {currentVariant && (
-                  <Text style={styles.variantPrice}>
-                    Price for {currentVariant.size}: <Text style={{ color: '#FF6B35' }}>₹{currentVariant.price}</Text>
-                  </Text>
+                  <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8}}>
+                    <Text style={styles.variantPrice}>
+                      Price for {currentVariant.size}: <Text style={{ color: '#FF6B35' }}>₹{currentVariant.price}</Text>
+                    </Text>
+                    {/* Add to Cart Controls */}
+                    <View style={{flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 20, borderWidth: 1, borderColor: '#2D2D44'}}>
+                      <TouchableOpacity onPress={() => updateCart(currentVariant.id, `${currentItem.item_name} (${currentVariant.size})`, currentVariant.price, -1)} style={{padding: 8, paddingHorizontal: 12}}>
+                        <Text style={{color: cart[currentVariant.id]?.qty > 0 ? '#FF6B35' : '#4B5563', fontSize: 16, fontWeight: '800'}}>-</Text>
+                      </TouchableOpacity>
+                      <Text style={{color: '#FFF', paddingHorizontal: 4, fontWeight: '700'}}>{cart[currentVariant.id]?.qty || 0}</Text>
+                      <TouchableOpacity onPress={() => updateCart(currentVariant.id, `${currentItem.item_name} (${currentVariant.size})`, currentVariant.price, 1)} style={{padding: 8, paddingHorizontal: 12}}>
+                        <Text style={{color: '#FF6B35', fontSize: 16, fontWeight: '800'}}>+</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 )}
               </View>
             )}
@@ -296,18 +522,63 @@ export default function ListingDetailScreen() {
 
           {/* Category Details */}
           {renderCategorySpecificDetails()}
+
+          {/* Reviews Section */}
+          <View style={{ marginTop: 32 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={styles.sectionTitle}>Reviews ({listing.reviews?.length || 0})</Text>
+              {profile?.id !== listing.seller_id && (
+                <TouchableOpacity onPress={() => setReviewModalVisible(true)} style={{ backgroundColor: '#2D2D44', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}>
+                  <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Write Review</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            
+            {listing.reviews && listing.reviews.length > 0 ? (
+              listing.reviews.map(review => (
+                <View key={review.id} style={{ backgroundColor: '#12121F', borderWidth: 1, borderColor: '#2D2D44', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#2D2D44', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
+                      <Text style={{ fontSize: 14 }}>{review.reviewer?.name?.charAt(0).toUpperCase() || '?'}</Text>
+                    </View>
+                    <View>
+                      <Text style={{ color: '#FFF', fontWeight: '600', fontSize: 14 }}>{review.reviewer?.name || 'Anonymous'}</Text>
+                      <Text style={{ color: '#FF6B35', fontSize: 12 }}>{'★'.repeat(review.rating)}{'☆'.repeat(5-review.rating)}</Text>
+                    </View>
+                  </View>
+                  <Text style={{ color: '#D1D5DB', fontSize: 14, lineHeight: 20 }}>{review.comment}</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={{ color: '#9CA3AF', fontStyle: 'italic', marginBottom: 16 }}>No reviews yet.</Text>
+            )}
+          </View>
         </View>
       </ScrollView>
 
       {/* Bottom Action Bar */}
       <View style={styles.bottomBar}>
-        <TouchableOpacity 
-          style={styles.contactBtn} 
-          onPress={() => setContactModalVisible(true)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.contactBtnText}>Contact Seller</Text>
-        </TouchableOpacity>
+        {profile?.id === listing.seller_id ? (
+          <View style={[styles.contactBtn, { backgroundColor: '#2D2D44' }]}>
+            <Text style={styles.contactBtnText}>This is your listing</Text>
+          </View>
+        ) : Object.keys(cart).length > 0 ? (
+          <TouchableOpacity 
+            style={[styles.contactBtn, { backgroundColor: '#25D366' }]} 
+            onPress={handleWhatsApp}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.contactBtnText}>Order {Object.values(cart).reduce((a,b)=>a+b.qty, 0)} items via WhatsApp</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity 
+            style={styles.contactBtn} 
+            onPress={() => setContactModalVisible(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.contactBtnText}>Contact Seller</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Contact Bottom Sheet (Modal) */}
@@ -346,6 +617,66 @@ export default function ListingDetailScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* Review Modal */}
+      <Modal
+        visible={isReviewModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReviewModalVisible(false)}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <KeyboardAvoidingView 
+            style={styles.modalOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <TouchableOpacity 
+              style={styles.modalDismiss} 
+              activeOpacity={1} 
+              onPress={() => setReviewModalVisible(false)} 
+            />
+            <View style={styles.bottomSheet}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>Write a Review</Text>
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginVertical: 24 }}>
+                {[1, 2, 3, 4, 5].map(star => (
+                  <TouchableOpacity key={star} onPress={() => setReviewRating(star)}>
+                    <Text style={{ fontSize: 40, color: star <= reviewRating ? '#FF6B35' : '#2D2D44' }}>★</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TextInput
+                style={{ backgroundColor: '#12121F', borderWidth: 1, borderColor: '#2D2D44', borderRadius: 12, padding: 16, color: '#FFF', height: 100, textAlignVertical: 'top', marginBottom: 24 }}
+                placeholder="Share your experience..."
+                placeholderTextColor="#6B7280"
+                multiline
+                value={reviewComment}
+                onChangeText={setReviewComment}
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+                blurOnSubmit={true}
+              />
+
+              <TouchableOpacity 
+                style={[styles.actionBtn, { backgroundColor: '#FF6B35' }]} 
+                onPress={handleSubmitReview}
+                disabled={isSubmittingReview}
+              >
+                {isSubmittingReview ? <ActivityIndicator color="#FFF" /> : <Text style={styles.actionBtnText}>Submit Review</Text>}
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.actionBtn, { backgroundColor: '#1A1A2E', borderWidth: 1, borderColor: '#2D2D44' }]} 
+                onPress={() => setReviewModalVisible(false)}
+              >
+                <Text style={[styles.actionBtnText, { color: '#9CA3AF' }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </TouchableWithoutFeedback>
       </Modal>
 
     </SafeAreaView>

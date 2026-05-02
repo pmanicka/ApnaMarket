@@ -18,13 +18,19 @@ export function useListing(id: string) {
         .select(`
           *,
           seller:users!seller_id(name, block, flat_number, profile_photo_url, mobile),
-          food_details(*),
+          food_items(*),
+          food_menu_settings(*),
           tuition_details(*),
           service_details(*),
           photos:listing_photos(photo_url, sort_order),
           cloth_items(
             id, item_name, material, sort_order,
             variants:cloth_variants(id, size, price, stock_count)
+          ),
+          grocery_items(*),
+          reviews(
+            id, rating, comment, created_at,
+            reviewer:users!reviewer_id(id, name, profile_photo_url)
           )
         `)
         .eq('id', id)

@@ -23,9 +23,10 @@ export function ListingCard({ listing }: ListingCardProps) {
   let displayPrice = '₹---';
   let isStartingFrom = false;
 
-  if (listing.category === 'food' && listing.food_details) {
-    displayPrice = `₹${listing.food_details.price}`;
-    isStartingFrom = false;
+  if (listing.category === 'food' && listing.food_items && listing.food_items.length > 0) {
+    const minPrice = Math.min(...listing.food_items.map(i => i.price));
+    displayPrice = `₹${minPrice}`;
+    isStartingFrom = listing.food_items.length > 1;
   } else if (listing.category === 'tuition' && listing.tuition_details) {
     displayPrice = `₹${listing.tuition_details.fee_per_month}/mo`;
   } else if (listing.category === 'services' && listing.service_details) {

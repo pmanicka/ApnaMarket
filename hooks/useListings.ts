@@ -44,7 +44,8 @@ export function useListings({ communityId, category, searchQuery, sellerId, stat
         ? `
           *,
           seller:users!seller_id(name, block, flat_number, profile_photo_url),
-          food_details!inner(*),
+          food_items!inner(*),
+          food_menu_settings(*),
           tuition_details(*),
           service_details(*),
           cloth_items(id, item_name, variants:cloth_variants(price))
@@ -52,7 +53,8 @@ export function useListings({ communityId, category, searchQuery, sellerId, stat
         : `
           *,
           seller:users!seller_id(name, block, flat_number, profile_photo_url),
-          food_details(*),
+          food_items(*),
+          food_menu_settings(*),
           tuition_details(*),
           service_details(*),
           cloth_items(id, item_name, variants:cloth_variants(price))
@@ -74,7 +76,7 @@ export function useListings({ communityId, category, searchQuery, sellerId, stat
       }
 
       if (isVegOnly) {
-        query = query.eq('food_details.is_veg', true);
+        query = query.eq('food_items.is_veg', true);
       }
 
       if (searchQuery) {
