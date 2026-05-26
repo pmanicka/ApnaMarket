@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
+  BackHandler,
 } from 'react-native';
 import { useState, useRef, useEffect } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -23,16 +24,52 @@ export default function OTPScreen() {
   const [digits, setDigits] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [isVerifying, setIsVerifying] = useState(false);
   const [isResending, setIsResending] = useState(false);
-  const [countdown, setCountdown] = useState(30);
+  const [isSending, setIsSending] = useState(true); // true while initial OTP is being sent
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(0); // start at 0; countdown begins after OTP sent
 
   const inputRefs = useRef<Array<TextInput | null>>(Array(OTP_LENGTH).fill(null));
 
+  // ── Send OTP on mount ────────────────────────────────────────────────────────
+  // By sending from here (not login.tsx), the auth state change fires while
+  // we're already on this screen, so the auth gate guard works correctly.
+  useEffect(() => {
+    const sendOtp = async () => {
+      if (!phone) return;
+      setIsSending(true);
+      setSendError(null);
+
+      const { error } = await supabase.auth.signInWithOtp({ phone });
+
+      setIsSending(false);
+      if (error) {
+        setSendError(error.message);
+      } else {
+        setCountdown(30); // start resend countdown only after successful send
+        setTimeout(() => inputRefs.current[0]?.focus(), 300);
+      }
+    };
+    sendOtp();
+  }, []);
+
+  // ── Resend countdown ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (countdown <= 0) return;
     const timer = setInterval(() => setCountdown((c) => c - 1), 1000);
     return () => clearInterval(timer);
   }, [countdown]);
 
+  // ── Disable Android back button after OTP sent ───────────────────────────────
+  // Prevents bypassing OTP verification by pressing back while session exists.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Allow back only while still sending (hasn't created session yet)
+      return !isSending;
+    });
+    return () => sub.remove();
+  }, [isSending]);
+
+  // ── Digit input ──────────────────────────────────────────────────────────────
   const handleDigitChange = (text: string, index: number) => {
     const digit = text.replace(/\D/g, '').slice(-1);
     const newDigits = [...digits];
@@ -57,6 +94,7 @@ export default function OTPScreen() {
     }
   };
 
+  // ── Verify OTP ───────────────────────────────────────────────────────────────
   const verifyOTP = async (otp: string) => {
     if (isVerifying) return;
     setIsVerifying(true);
@@ -77,26 +115,31 @@ export default function OTPScreen() {
 
     setIsVerifying(false);
 
+    // Explicitly route based on full profile state so we don't rely on the
+    // auth gate (which skips routing while currentScreen === 'otp').
     if (data.user) {
       const { data: profile } = await supabase
         .from('users')
-        .select('name')
+        .select('name, is_approved')
         .eq('id', data.user.id)
         .single();
 
       if (!profile?.name) {
         router.replace('/(auth)/onboarding');
+      } else if (!profile.is_approved) {
+        router.replace('/(auth)/pending');
+      } else {
+        router.replace('/(tabs)');
       }
     }
   };
 
+  // ── Resend ───────────────────────────────────────────────────────────────────
   const handleResend = async () => {
     if (countdown > 0 || isResending) return;
     setIsResending(true);
 
-    const { error } = await supabase.auth.signInWithOtp({
-      phone: phone ?? '',
-    });
+    const { error } = await supabase.auth.signInWithOtp({ phone: phone ?? '' });
 
     setIsResending(false);
 
@@ -115,6 +158,32 @@ export default function OTPScreen() {
     ? phone.replace(/(\+\d{2})(\d{3})(\d{3})(\d{4})/, '$1 $2 *** $4')
     : '';
 
+  // ── Sending state UI ─────────────────────────────────────────────────────────
+  if (isSending) {
+    return (
+      <View style={[styles.container, styles.center]}>
+        <StatusBar style="light" />
+        <ActivityIndicator size="large" color="#FF6B35" />
+        <Text style={styles.sendingText}>Sending OTP to {maskedPhone}…</Text>
+      </View>
+    );
+  }
+
+  if (sendError) {
+    return (
+      <View style={[styles.container, styles.center]}>
+        <StatusBar style="light" />
+        <Text style={styles.errorEmoji}>⚠️</Text>
+        <Text style={styles.errorTitle}>Failed to Send OTP</Text>
+        <Text style={styles.errorMsg}>{sendError}</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={() => router.back()}>
+          <Text style={styles.retryBtnText}>← Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Main OTP UI ──────────────────────────────────────────────────────────────
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -125,10 +194,6 @@ export default function OTPScreen() {
       <View style={styles.bgAccent} />
 
       <View style={styles.content}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
-
         <View style={styles.header}>
           <View style={styles.iconCircle}>
             <Text style={styles.iconEmoji}>💬</Text>
@@ -206,10 +271,15 @@ const BORDER = '#2D2D44';
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
+  center: { justifyContent: 'center', alignItems: 'center', gap: 16, padding: 32 },
   bgAccent: { position: 'absolute', width: 250, height: 250, borderRadius: 125, backgroundColor: ORANGE, opacity: 0.05, top: -60, left: -60 },
   content: { flex: 1, paddingHorizontal: 24, paddingTop: 60 },
-  backBtn: { alignSelf: 'flex-start', marginBottom: 32 },
-  backText: { color: '#9CA3AF', fontSize: 15, fontWeight: '600' },
+  sendingText: { color: '#9CA3AF', fontSize: 15, textAlign: 'center' },
+  errorEmoji: { fontSize: 48 },
+  errorTitle: { color: '#FFF', fontSize: 20, fontWeight: '700' },
+  errorMsg: { color: '#9CA3AF', fontSize: 14, textAlign: 'center' },
+  retryBtn: { backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12, borderWidth: 1, borderColor: BORDER },
+  retryBtnText: { color: ORANGE, fontWeight: '600', fontSize: 15 },
   header: { alignItems: 'center', marginBottom: 40 },
   iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#1A1A2E', borderWidth: 1.5, borderColor: ORANGE, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   iconEmoji: { fontSize: 32 },

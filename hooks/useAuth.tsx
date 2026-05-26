@@ -68,13 +68,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     // Listen for auth changes
+    // We only fetch/update profile on real sign-in events (after OTP verification),
+    // not on PASSWORD_RECOVERY, TOKEN_REFRESHED, etc.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         setSession(session);
         setSupabaseUser(session?.user ?? null);
-        if (session?.user) {
+        if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
           fetchProfile(session.user.id);
-        } else {
+        } else if (!session) {
           setProfile(null);
         }
       }

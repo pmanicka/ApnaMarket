@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Switch, ActivityIndicator, Alert, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Switch, ActivityIndicator, Alert, SafeAreaView, Platform, StatusBar as RNStatusBar } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabase';
 import { ImagePickerGrid } from '../../components/ImagePickerGrid';
 import { uploadListingImage } from '../../lib/uploadImage';
 import { Category, ContactPreference } from '../../types';
+import { StatusBar } from 'expo-status-bar';
 
 // Types for Clothes
 type ClothVariant = { id: string; size: string; price: string; stock: string };
@@ -618,6 +619,7 @@ export default function SellFormScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <StatusBar style="light" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backBtnText}>✕ Cancel</Text>
@@ -700,9 +702,11 @@ const BG = '#0F0F1A';
 const CARD_BG = '#1A1A2E';
 const BORDER = '#2D2D44';
 const ORANGE = '#FF6B35';
+// Extra top padding for Android status bar
+const ANDROID_STATUS_BAR = Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 0) : 0;
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: BG },
+  safeArea: { flex: 1, backgroundColor: BG, paddingTop: ANDROID_STATUS_BAR },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: BORDER },
   backBtn: { padding: 8, marginLeft: -8 },
   backBtnText: { color: '#9CA3AF', fontSize: 16 },

@@ -2,7 +2,7 @@
   "expo": {
     "name": "ApnaMarket",
     "slug": "apna-market",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -15,10 +15,10 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.apnamarket.app"
+      "bundleIdentifier": "com.apnamarket.community"
     },
     "android": {
-      "package": "com.apnamarket.app",
+      "package": "com.apnamarket.community",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0F0F1A"

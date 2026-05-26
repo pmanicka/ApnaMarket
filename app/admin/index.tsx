@@ -28,9 +28,16 @@ export default function AdminPanelScreen() {
       .select('*, community:communities(id, name, city, is_active, created_at)')
       .order('created_at', { ascending: false });
 
-    if (activeTab === 'pending') query = query.eq('is_approved', false);
-    else if (activeTab === 'approved') query = query.eq('is_approved', true).eq('is_admin', false);
-    else if (activeTab === 'admins') query = query.eq('is_admin', true);
+    if (activeTab === 'pending') {
+      // Only show users who have completed onboarding (name is set)
+      // Users who just signed up with a phone number but haven't filled their
+      // profile details yet should NOT appear in the pending queue.
+      query = query.eq('is_approved', false).not('name', 'is', null).neq('name', '');
+    } else if (activeTab === 'approved') {
+      query = query.eq('is_approved', true).eq('is_admin', false);
+    } else if (activeTab === 'admins') {
+      query = query.eq('is_admin', true);
+    }
 
     const { data, error } = await query;
     if (!error && data) setUsers(data as PendingUser[]);

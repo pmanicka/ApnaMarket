@@ -6,17 +6,14 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   Alert,
 } from 'react-native';
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
-import { supabase } from '../../lib/supabase';
 import { StatusBar } from 'expo-status-bar';
 
 export default function LoginScreen() {
   const [phone, setPhone] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
   const formatPhoneNumber = (raw: string) => {
@@ -26,30 +23,15 @@ export default function LoginScreen() {
     return `+${digits}`;
   };
 
-  const handleSendOTP = async () => {
+  const handleSendOTP = () => {
     const trimmed = phone.trim();
     if (trimmed.length < 10) {
       Alert.alert('Invalid Number', 'Please enter a valid 10-digit mobile number.');
       return;
     }
-
     const formatted = formatPhoneNumber(trimmed);
-    setIsLoading(true);
-
-    const { error } = await supabase.auth.signInWithOtp({
-      phone: formatted,
-      options: {
-        channel: 'whatsapp',
-      }
-    });
-
-    setIsLoading(false);
-
-    if (error) {
-      Alert.alert('Error', error.message);
-      return;
-    }
-
+    // Navigate first — the OTP screen sends the OTP on mount so the
+    // auth state change fires while we're already on the OTP screen.
     router.push({ pathname: '/(auth)/otp', params: { phone: formatted } });
   };
 
@@ -97,16 +79,11 @@ export default function LoginScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.button, isLoading && styles.buttonDisabled]}
+            style={styles.button}
             onPress={handleSendOTP}
-            disabled={isLoading}
             activeOpacity={0.85}
           >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Send OTP →</Text>
-            )}
+            <Text style={styles.buttonText}>Send OTP →</Text>
           </TouchableOpacity>
 
           <Text style={styles.disclaimer}>

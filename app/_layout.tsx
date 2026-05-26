@@ -18,23 +18,28 @@ function AuthGate() {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    const inTabs = segments[0] === '(tabs)';
     const inAdmin = segments[0] === 'admin';
+    const seg = segments as string[];
+    const currentScreen = seg[1]; // e.g. 'login', 'otp', 'onboarding', 'pending'
 
     if (!session && !inAuthGroup) {
       // Not signed in → go to login
       router.replace('/(auth)/login');
     } else if (session && inAuthGroup) {
-      // Signed in — check profile state
-      if (!profile) return; // still loading profile
+      // If user is on the OTP screen, let them stay — they haven't verified yet.
+      // Profile will be null/incomplete at this point because signInWithOtp creates
+      // a session but verification hasn't happened yet.
+      if (currentScreen === 'otp') return;
 
-      const seg = segments as string[];
+      // Profile not loaded yet — wait
+      if (!profile) return;
+
       if (!profile.name) {
         // New user — needs to complete onboarding
-        if (seg[1] !== 'onboarding') router.replace('/(auth)/onboarding');
+        if (currentScreen !== 'onboarding') router.replace('/(auth)/onboarding');
       } else if (!profile.is_approved) {
         // Registered but not yet approved
-        if (seg[1] !== 'pending') router.replace('/(auth)/pending');
+        if (currentScreen !== 'pending') router.replace('/(auth)/pending');
       } else {
         // Fully approved — go to main app
         router.replace('/(tabs)');
