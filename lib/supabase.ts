@@ -1,19 +1,44 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
-// ─── SecureStore adapter for Supabase session persistence ────────────────────
-const ExpoSecureStoreAdapter = {
-  getItem: (key: string) => {
-    return SecureStore.getItemAsync(key);
-  },
-  setItem: (key: string, value: string) => {
-    SecureStore.setItemAsync(key, value);
-  },
-  removeItem: (key: string) => {
-    SecureStore.deleteItemAsync(key);
-  },
-};
+// ─── Platform-aware storage adapter for Supabase session persistence ──────────
+// Uses expo-secure-store on native (iOS/Android) and localStorage on web
+const ExpoSecureStoreAdapter = Platform.OS === 'web'
+  ? {
+      getItem: (key: string) => {
+        try {
+          return Promise.resolve(localStorage.getItem(key));
+        } catch {
+          return Promise.resolve(null);
+        }
+      },
+      setItem: (key: string, value: string) => {
+        try {
+          localStorage.setItem(key, value);
+        } catch {}
+        return Promise.resolve();
+      },
+      removeItem: (key: string) => {
+        try {
+          localStorage.removeItem(key);
+        } catch {}
+        return Promise.resolve();
+      },
+    }
+  : {
+      getItem: (key: string) => {
+        return SecureStore.getItemAsync(key);
+      },
+      setItem: (key: string, value: string) => {
+        SecureStore.setItemAsync(key, value);
+      },
+      removeItem: (key: string) => {
+        SecureStore.deleteItemAsync(key);
+      },
+    };
+
 
 // ─── Supabase client ──────────────────────────────────────────────────────────
 // Replace these with your actual Supabase project values
