@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity, Image, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
 interface ImagePickerGridProps {
@@ -9,16 +9,22 @@ interface ImagePickerGridProps {
 
 export function ImagePickerGrid({ images, onChange, maxImages = 6 }: ImagePickerGridProps) {
   const pickImage = async () => {
-    // Request permission
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Sorry, we need camera roll permissions to make this work!');
-      return;
+    // On web, media library permissions API is not available — skip it
+    if (Platform.OS !== 'web') {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Sorry, we need camera roll permissions to make this work!');
+        return;
+      }
     }
 
     const remainingSlots = maxImages - images.length;
     if (remainingSlots <= 0) {
-      Alert.alert('Limit reached', `You can only upload up to ${maxImages} images.`);
+      if (Platform.OS === 'web') {
+        window.alert(`Limit reached: You can only upload up to ${maxImages} images.`);
+      } else {
+        Alert.alert('Limit reached', `You can only upload up to ${maxImages} images.`);
+      }
       return;
     }
 
@@ -27,7 +33,7 @@ export function ImagePickerGrid({ images, onChange, maxImages = 6 }: ImagePicker
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
       selectionLimit: remainingSlots,
-      quality: 0.8, // Initial quality, will compress later
+      quality: 0.8,
     });
 
     if (!result.canceled) {
@@ -48,7 +54,7 @@ export function ImagePickerGrid({ images, onChange, maxImages = 6 }: ImagePicker
       {images.map((uri, index) => (
         <View key={`${uri}-${index}`} style={styles.imageWrapper}>
           <Image source={{ uri }} style={styles.image} />
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.deleteBtn}
             onPress={() => removeImage(index)}
           >

@@ -1,16 +1,45 @@
+import { Platform } from 'react-native';
 import { supabase } from './supabase';
-import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system/legacy';
-import { decode } from 'base64-arraybuffer';
 
 /**
- * Compresses an image and uploads it to the Supabase listing-photos bucket.
+ * Compresses (native only) and uploads an image to the Supabase listing-photos bucket.
  * Returns the public URL of the uploaded image.
+ *
+ * On web:   ImagePicker gives a blob: URI → fetch it as a Blob → upload directly.
+ * On native: use expo-image-manipulator + expo-file-system for compress + base64 upload.
  */
 export async function uploadListingImage(localUri: string, userId: string): Promise<string> {
-  try {
-    // 1. Compress Image
-    // Resize width to max 1080px, compress quality to 70%
+  const fileExt = 'jpeg';
+  const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+
+  if (Platform.OS === 'web') {
+    // ── Web path ──────────────────────────────────────────────────────────────
+    // expo-image-picker on web gives a blob: or data: URI — fetch it as a Blob.
+    const response = await fetch(localUri);
+    const blob = await response.blob();
+
+    const { data, error } = await supabase.storage
+      .from('listing-photos')
+      .upload(fileName, blob, {
+        contentType: `image/${fileExt}`,
+        upsert: false,
+      });
+
+    if (error) throw error;
+
+    const { data: publicUrlData } = supabase.storage
+      .from('listing-photos')
+      .getPublicUrl(data.path);
+
+    return publicUrlData.publicUrl;
+  } else {
+    // ── Native path ───────────────────────────────────────────────────────────
+    // Lazy-import native-only modules so they are never evaluated on web
+    const ImageManipulator = await import('expo-image-manipulator');
+    const FileSystem = await import('expo-file-system/legacy');
+    const { decode } = await import('base64-arraybuffer');
+
+    // 1. Compress: resize to max 1080px wide, 70% JPEG quality
     const manipResult = await ImageManipulator.manipulateAsync(
       localUri,
       [{ resize: { width: 1080 } }],
@@ -22,14 +51,10 @@ export async function uploadListingImage(localUri: string, userId: string): Prom
       encoding: 'base64',
     });
 
-    // 3. Convert base64 to ArrayBuffer using decode
+    // 3. Convert to ArrayBuffer
     const buffer = decode(base64);
 
-    // 4. Generate unique filename
-    const fileExt = 'jpeg';
-    const fileName = `${userId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-
-    // 5. Upload to Supabase Storage
+    // 4. Upload
     const { data, error } = await supabase.storage
       .from('listing-photos')
       .upload(fileName, buffer, {
@@ -37,18 +62,12 @@ export async function uploadListingImage(localUri: string, userId: string): Prom
         upsert: false,
       });
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
-    // 6. Get Public URL
     const { data: publicUrlData } = supabase.storage
       .from('listing-photos')
       .getPublicUrl(data.path);
 
     return publicUrlData.publicUrl;
-  } catch (error) {
-    console.error('Error uploading image:', error);
-    throw error;
   }
 }
