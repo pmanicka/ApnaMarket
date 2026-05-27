@@ -224,11 +224,19 @@ export default function SellFormScreen() {
 
   const handleSubmit = async () => {
     if (!validate()) {
-      Alert.alert('Missing Fields', 'Please fill all required fields highlighted in red.');
+      if (Platform.OS === 'web') {
+        window.alert('Missing Fields: Please fill all required fields highlighted in red.');
+      } else {
+        Alert.alert('Missing Fields', 'Please fill all required fields highlighted in red.');
+      }
       return;
     }
     if (!profile) {
-      Alert.alert('Error', 'You must be logged in to post.');
+      if (Platform.OS === 'web') {
+        window.alert('Error: You must be logged in to post.');
+      } else {
+        Alert.alert('Error', 'You must be logged in to post.');
+      }
       return;
     }
 
@@ -355,12 +363,22 @@ export default function SellFormScreen() {
         if (serviceError) throw serviceError;
       }
 
-      Alert.alert('Success', 'Listing published!', [
-        { text: 'OK', onPress: () => router.replace('/(tabs)') }
-      ]);
+      // On web, Alert.alert callbacks are not supported — navigate directly
+      if (Platform.OS === 'web') {
+        window.alert('Success: Listing published!');
+        router.replace('/(tabs)');
+      } else {
+        Alert.alert('Success', 'Listing published!', [
+          { text: 'OK', onPress: () => router.replace('/(tabs)') }
+        ]);
+      }
     } catch (error: any) {
       console.error(error);
-      Alert.alert('Upload Failed', error.message);
+      if (Platform.OS === 'web') {
+        window.alert(`Upload Failed: ${error.message}`);
+      } else {
+        Alert.alert('Upload Failed', error.message);
+      }
     } finally {
       setIsSubmitting(false);
     }

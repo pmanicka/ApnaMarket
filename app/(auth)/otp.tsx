@@ -3,7 +3,7 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
+  ScrollView,
   Platform,
   ActivityIndicator,
   Alert,
@@ -31,8 +31,6 @@ export default function OTPScreen() {
   const inputRefs = useRef<Array<TextInput | null>>(Array(OTP_LENGTH).fill(null));
 
   // ── Send OTP on mount ────────────────────────────────────────────────────────
-  // By sending from here (not login.tsx), the auth state change fires while
-  // we're already on this screen, so the auth gate guard works correctly.
   useEffect(() => {
     const sendOtp = async () => {
       if (!phone) return;
@@ -45,7 +43,7 @@ export default function OTPScreen() {
       if (error) {
         setSendError(error.message);
       } else {
-        setCountdown(30); // start resend countdown only after successful send
+        setCountdown(30);
         setTimeout(() => inputRefs.current[0]?.focus(), 300);
       }
     };
@@ -59,11 +57,10 @@ export default function OTPScreen() {
     return () => clearInterval(timer);
   }, [countdown]);
 
-  // ── Disable Android back button after OTP sent ───────────────────────────────
-  // Prevents bypassing OTP verification by pressing back while session exists.
+  // ── Disable Android back button after OTP sent (native only) ─────────────────
   useEffect(() => {
+    if (Platform.OS === 'web') return; // BackHandler not available on web
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Allow back only while still sending (hasn't created session yet)
       return !isSending;
     });
     return () => sub.remove();
@@ -109,14 +106,16 @@ export default function OTPScreen() {
       setIsVerifying(false);
       setDigits(Array(OTP_LENGTH).fill(''));
       inputRefs.current[0]?.focus();
-      Alert.alert('Wrong OTP', 'The code you entered is incorrect. Please try again.');
+      if (Platform.OS === 'web') {
+        window.alert('Wrong OTP: The code you entered is incorrect. Please try again.');
+      } else {
+        Alert.alert('Wrong OTP', 'The code you entered is incorrect. Please try again.');
+      }
       return;
     }
 
     setIsVerifying(false);
 
-    // Explicitly route based on full profile state so we don't rely on the
-    // auth gate (which skips routing while currentScreen === 'otp').
     if (data.user) {
       const { data: profile } = await supabase
         .from('users')
@@ -144,14 +143,22 @@ export default function OTPScreen() {
     setIsResending(false);
 
     if (error) {
-      Alert.alert('Error', error.message);
+      if (Platform.OS === 'web') {
+        window.alert(`Error: ${error.message}`);
+      } else {
+        Alert.alert('Error', error.message);
+      }
       return;
     }
 
     setCountdown(30);
     setDigits(Array(OTP_LENGTH).fill(''));
     inputRefs.current[0]?.focus();
-    Alert.alert('OTP Sent', 'A new code has been sent to your phone.');
+    if (Platform.OS === 'web') {
+      window.alert('OTP Sent: A new code has been sent to your phone.');
+    } else {
+      Alert.alert('OTP Sent', 'A new code has been sent to your phone.');
+    }
   };
 
   const maskedPhone = phone
@@ -185,83 +192,85 @@ export default function OTPScreen() {
 
   // ── Main OTP UI ──────────────────────────────────────────────────────────────
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <View style={styles.container}>
       <StatusBar style="light" />
 
       <View style={styles.bgAccent} />
 
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <View style={styles.iconCircle}>
-            <Text style={styles.iconEmoji}>💬</Text>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.content}>
+          <View style={styles.header}>
+            <View style={styles.iconCircle}>
+              <Text style={styles.iconEmoji}>💬</Text>
+            </View>
+            <Text style={styles.title}>Verify Your Number</Text>
+            <Text style={styles.subtitle}>
+              We sent a 6-digit code to{'\n'}
+              <Text style={styles.phoneHighlight}>{maskedPhone}</Text>
+            </Text>
           </View>
-          <Text style={styles.title}>Verify Your Number</Text>
-          <Text style={styles.subtitle}>
-            We sent a 6-digit code to{'\n'}
-            <Text style={styles.phoneHighlight}>{maskedPhone}</Text>
+
+          <View style={styles.otpRow}>
+            {Array.from({ length: OTP_LENGTH }).map((_, i) => (
+              <TextInput
+                key={i}
+                ref={(ref) => { inputRefs.current[i] = ref; }}
+                style={[
+                  styles.otpBox,
+                  digits[i] ? styles.otpBoxFilled : null,
+                ]}
+                maxLength={1}
+                keyboardType="number-pad"
+                value={digits[i]}
+                onChangeText={(text) => handleDigitChange(text, i)}
+                onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, i)}
+                selectTextOnFocus
+                caretHidden
+                autoFocus={i === 0}
+              />
+            ))}
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.button,
+              (isVerifying || digits.some((d) => !d)) && styles.buttonDisabled,
+            ]}
+            onPress={() => verifyOTP(digits.join(''))}
+            disabled={isVerifying || digits.some((d) => !d)}
+            activeOpacity={0.85}
+          >
+            {isVerifying ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Verify & Continue</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.resendRow}>
+            <Text style={styles.resendLabel}>Didn't receive the code? </Text>
+            {countdown > 0 ? (
+              <Text style={styles.countdown}>Resend in {countdown}s</Text>
+            ) : (
+              <TouchableOpacity onPress={handleResend} disabled={isResending}>
+                {isResending ? (
+                  <ActivityIndicator size="small" color="#FF6B35" />
+                ) : (
+                  <Text style={styles.resendLink}>Resend OTP</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Text style={styles.note}>
+            💡 Check your SMS inbox. The code expires in 10 minutes.
           </Text>
         </View>
-
-        <View style={styles.otpRow}>
-          {Array.from({ length: OTP_LENGTH }).map((_, i) => (
-            <TextInput
-              key={i}
-              ref={(ref) => { inputRefs.current[i] = ref; }}
-              style={[
-                styles.otpBox,
-                digits[i] ? styles.otpBoxFilled : null,
-              ]}
-              maxLength={1}
-              keyboardType="number-pad"
-              value={digits[i]}
-              onChangeText={(text) => handleDigitChange(text, i)}
-              onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, i)}
-              selectTextOnFocus
-              caretHidden
-              autoFocus={i === 0}
-            />
-          ))}
-        </View>
-
-        <TouchableOpacity
-          style={[
-            styles.button,
-            (isVerifying || digits.some((d) => !d)) && styles.buttonDisabled,
-          ]}
-          onPress={() => verifyOTP(digits.join(''))}
-          disabled={isVerifying || digits.some((d) => !d)}
-          activeOpacity={0.85}
-        >
-          {isVerifying ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Verify & Continue</Text>
-          )}
-        </TouchableOpacity>
-
-        <View style={styles.resendRow}>
-          <Text style={styles.resendLabel}>Didn't receive the code? </Text>
-          {countdown > 0 ? (
-            <Text style={styles.countdown}>Resend in {countdown}s</Text>
-          ) : (
-            <TouchableOpacity onPress={handleResend} disabled={isResending}>
-              {isResending ? (
-                <ActivityIndicator size="small" color="#FF6B35" />
-              ) : (
-                <Text style={styles.resendLink}>Resend OTP</Text>
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <Text style={styles.note}>
-          💡 Check your SMS inbox. The code expires in 10 minutes.
-        </Text>
-      </View>
-    </KeyboardAvoidingView>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -273,7 +282,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
   center: { justifyContent: 'center', alignItems: 'center', gap: 16, padding: 32 },
   bgAccent: { position: 'absolute', width: 250, height: 250, borderRadius: 125, backgroundColor: ORANGE, opacity: 0.05, top: -60, left: -60 },
-  content: { flex: 1, paddingHorizontal: 24, paddingTop: 60 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', minHeight: '100%' as any },
+  content: { flex: 1, paddingHorizontal: 24, paddingVertical: 60 },
   sendingText: { color: '#9CA3AF', fontSize: 15, textAlign: 'center' },
   errorEmoji: { fontSize: 48 },
   errorTitle: { color: '#FFF', fontSize: 20, fontWeight: '700' },
